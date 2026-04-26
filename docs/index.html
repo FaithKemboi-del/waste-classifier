@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Waste Classifier</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #e8f5e9, #e3f2fd);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+    header { text-align: center; margin-bottom: 32px; }
+    header h1 { font-size: 32px; color: #1b5e20; margin-bottom: 6px; }
+    header p { color: #555; font-size: 15px; }
+    .card {
+      background: white;
+      border-radius: 20px;
+      padding: 36px;
+      width: 100%;
+      max-width: 500px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.10);
+    }
+    .upload-area {
+      border: 2.5px dashed #90caf9;
+      border-radius: 14px;
+      padding: 44px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #f5faff;
+      margin-bottom: 24px;
+    }
+    .upload-area:hover { border-color: #1976d2; background: #e3f2fd; }
+    .upload-area input { display: none; }
+    .upload-icon { font-size: 48px; margin-bottom: 10px; }
+    .upload-area p { color: #888; font-size: 14px; }
+    .upload-area strong { color: #1976d2; }
+    #preview {
+      width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+      border-radius: 12px;
+      display: none;
+      margin-bottom: 24px;
+      border: 1px solid #eee;
+    }
+    #status {
+      text-align: center;
+      color: #888;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+    #result { display: none; }
+    .result-header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .result-emoji { font-size: 56px; margin-bottom: 6px; }
+    .result-label {
+      font-size: 26px;
+      font-weight: 700;
+      text-transform: capitalize;
+      color: #1b5e20;
+    }
+    .result-sub { font-size: 13px; color: #888; margin-top: 4px; }
+    .bar-wrap { margin-bottom: 12px; }
+    .bar-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 5px;
+      text-transform: capitalize;
+    }
+    .bar-bg {
+      background: #f0f0f0;
+      border-radius: 99px;
+      height: 12px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.7s cubic-bezier(.4,0,.2,1);
+    }
+    .plastic { background: linear-gradient(90deg, #42a5f5, #1976d2); }
+    .paper   { background: linear-gradient(90deg, #66bb6a, #388e3c); }
+    .metal   { background: linear-gradient(90deg, #ffa726, #f57c00); }
+    .organic { background: linear-gradient(90deg, #ab47bc, #7b1fa2); }
+    .divider { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+    .tip {
+      background: #f1f8e9;
+      border-left: 4px solid #66bb6a;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #33691e;
+      margin-top: 20px;
+    }
+    .btn-reset {
+      display: block;
+      width: 100%;
+      margin-top: 20px;
+      padding: 12px;
+      background: #1b5e20;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-reset:hover { background: #2e7d32; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>♻️ Waste Classifier</h1>
+    <p>Upload an image to identify the type of waste</p>
+  </header>
+
+  <div class="card">
+    <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+      <input type="file" id="fileInput" accept="image/*" onchange="handleUpload(event)">
+      <div class="upload-icon">📂</div>
+      <p><strong>Click to upload</strong> an image</p>
+      <p>Supports JPG, PNG, WEBP</p>
+    </div>
+
+    <img id="preview" alt="Preview">
+    <div id="status">⏳ Loading model...</div>
+
+    <div id="result">
+      <div class="result-header">
+        <div class="result-emoji" id="emoji"></div>
+        <div class="result-label" id="label"></div>
+        <div class="result-sub" id="confidence"></div>
+      </div>
+      <hr class="divider">
+      <div id="bars"></div>
+      <div class="tip" id="tip"></div>
+      <button class="btn-reset" onclick="reset()">🔄 Classify Another</button>
+    </div>
+  </div>
+
+  <script>
+    const CLASSES = ["metal", "organic", "paper", "plastic"];
+    const EMOJIS  = { metal: "🔩", organic: "🌿", paper: "📄", plastic: "🧴" };
+    const TIPS    = {
+      metal:   "♻️ Metal can be recycled indefinitely! Take it to a metal recycling bin.",
+      organic: "🌱 Organic waste can be composted to create natural fertilizer.",
+      paper:   "📰 Paper is recyclable! Make sure it's dry and clean before recycling.",
+      plastic: "🧴 Check the recycling number on the plastic before disposal."
+    };
+
+    let model;
+
+    async function loadModel() {
+      try {
+        model = await tf.loadLayersModel("tfjs_model/model.json");
+        document.getElementById("status").textContent = "✅ Model ready — upload an image!";
+      } catch(e) {
+        document.getElementById("status").textContent = "❌ Error loading model.";
+        console.error(e);
+      }
+    }
+
+    async function handleUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const preview = document.getElementById("preview");
+      preview.src = URL.createObjectURL(file);
+      preview.style.display = "block";
+      document.getElementById("result").style.display = "none";
+      document.getElementById("status").textContent = "🔍 Classifying...";
+
+      preview.onload = async () => {
+        const tensor = tf.browser.fromPixels(preview)
+          .resizeBilinear([224, 224])
+          .expandDims(0)
+          .div(255.0);
+
+        const preds    = await model.predict(tensor).data();
+        const top      = preds.indexOf(Math.max(...preds));
+        const topClass = CLASSES[top];
+        const topConf  = (preds[top] * 100).toFixed(1);
+
+        document.getElementById("emoji").textContent     = EMOJIS[topClass];
+        document.getElementById("label").textContent     = topClass;
+        document.getElementById("confidence").textContent = `${topConf}% confidence`;
+        document.getElementById("tip").textContent       = TIPS[topClass];
+
+        const bars = document.getElementById("bars");
+        bars.innerHTML = "";
+        CLASSES.forEach((cls, i) => {
+          const pct = (preds[i] * 100).toFixed(1);
+          bars.innerHTML += `
+            <div class="bar-wrap">
+              <div class="bar-label">
+                <span>${EMOJIS[cls]} ${cls}</span>
+                <span>${pct}%</span>
+              </div>
+              <div class="bar-bg">
+                <div class="bar-fill ${cls}" style="width:${pct}%"></div>
+              </div>
+            </div>`;
+        });
+
+        document.getElementById("result").style.display = "block";
+        document.getElementById("status").textContent = "";
+      };
+    }
+
+    function reset() {
+      document.getElementById("fileInput").value = "";
+      document.getElementById("preview").style.display = "none";
+      document.getElementById("result").style.display = "none";
+      document.getElementById("status").textContent = "✅ Model ready — upload an image!";
+    }
+
+    loadModel();
+  </script>
+</body>
+</html>

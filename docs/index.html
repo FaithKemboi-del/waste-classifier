@@ -165,7 +165,7 @@
 
     async function loadModel() {
       try {
-        model = await tf.loadLayersModel("tfjs_model/model.json");
+        model = await tf.loadLayersModel("./tfjs_model/model.json");
         document.getElementById("status").textContent = "✅ Model ready — upload an image!";
       } catch(e) {
         document.getElementById("status").textContent = "❌ Error loading model.";
